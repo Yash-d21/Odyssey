@@ -11,7 +11,7 @@ const app = express();
 app.use(express.json({ limit: '32kb' }));
 app.use(express.static(join(root, 'public')));
 
-const dataDir = join(root, 'data');
+const dataDir = process.env.VERCEL ? join('/tmp', 'odyssey') : join(root, 'data');
 const historyFile = join(dataDir, 'history.json');
 mkdirSync(dataDir, { recursive: true });
 
@@ -259,6 +259,10 @@ function writeEvent(res, event) {
 }
 
 const port = Number(process.env.PORT) || 4173;
-app.listen(port, () => {
-  console.log(`Odyssey is running at http://localhost:${port}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`Odyssey is running at http://localhost:${port}`);
+  });
+}
+
+export default app;

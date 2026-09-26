@@ -53,16 +53,17 @@ export async function runOdyssey({ url, emit }) {
   };
 
   try {
-    let headed = true;
+    let headed = !process.env.VERCEL;
     try {
-      browser = await chromium.launch({
-        headless: false,
-        slowMo: 220,
-        args: ['--window-position=80,60'],
-      });
+      browser = await chromium.launch(headed
+        ? { headless: false, slowMo: 220, args: ['--window-position=80,60'] }
+        : { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
     } catch {
       headed = false;
-      browser = await chromium.launch({ headless: true });
+      browser = await chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      });
     }
 
     const browserNote = headed
