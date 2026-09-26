@@ -16,6 +16,8 @@ npm start
 
 Open [http://localhost:4173](http://localhost:4173).
 
+The hosted copy is at [https://odyssey-six-lyart.vercel.app](https://odyssey-six-lyart.vercel.app). On Vercel the agent runs headless, a run has about a minute, and saved history lives only while that server instance is warm. `npm start` on your computer keeps the desktop browser and the saved runs.
+
 One audit runs at a time. Saved runs, screenshots, and PDFs stay in `data/`, which is not committed.
 
 ## What a run does
