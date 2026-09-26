@@ -1,0 +1,14 @@
+{
+  "name": "odyssey",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Odyssey — live browser agent plus UI/UX audit for any website link.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "playwright": "^1.55.0"
+  }
+}

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Odyssey</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="side-head">
+        <p class="mark">Odyssey</p>
+        <button id="new-run" type="button">New run</button>
+      </div>
+      <h2 id="history-title">History</h2>
+      <ul id="history"></ul>
+    </aside>
+    <button id="backdrop" class="backdrop" type="button" aria-label="Close history"></button>
+
+    <main class="content">
+      <header class="top">
+        <button id="menu" class="menu" type="button" aria-label="Open history">History</button>
+      </header>
+
+      <div class="results" id="results">
+    <section class="workspace">
+      <div class="browser">
+        <div class="chrome">
+          <span id="live-pill" class="pill">Idle</span>
+          <span id="live-url">Agent browser</span>
+        </div>
+        <div class="screen">
+          <img id="frame" alt="Live view of the agent browser" hidden />
+          <p id="frame-empty">The agent’s browser will show up here, including each click.</p>
+        </div>
+      </div>
+      <aside class="log-panel">
+        <h2>What the agent is doing</h2>
+        <ol id="actions"></ol>
+      </aside>
+    </section>
+
+    <section id="report" class="sheet" hidden>
+      <div class="sheet-tools">
+        <a id="design-pdf" href="#" download="odyssey-design.pdf">Design PDF</a>
+        <a id="testing-pdf" href="#" download="odyssey-testing.pdf">Testing PDF</a>
+        <button id="print" type="button">Print document</button>
+        <a id="download" href="#" download="odyssey-report.json">Download JSON</a>
+      </div>
+      <article id="document" class="document"></article>
+    </section>
+      </div>
+
+      <div class="stage" id="stage">
+        <div class="hero">
+          <p class="eyebrow">Odyssey</p>
+          <h1>Review a website</h1>
+          <p>Paste a link. The agent opens it, clicks through, and writes the design and testing reports.</p>
+        </div>
+        <form id="run-form" class="url-row">
+          <label class="sr" for="url">Website link</label>
+          <input id="url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="https://example.com" required />
+          <button id="run-btn" type="submit">Run</button>
+        </form>
+        <p id="status" class="status" role="status">Waiting for a link.</p>
+      </div>
+    </main>
+  </div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
