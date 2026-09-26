@@ -1,12 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "express",
-  "buildCommand": "PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium-headless-shell",
   "functions": {
     "server.js": {
       "maxDuration": 60,
-      "memory": 1024,
-      "includeFiles": "{public/**,vendor/**,node_modules/playwright-core/.local-browsers/**}"
+      "includeFiles": "{public/**,vendor/**,node_modules/@sparticuz/chromium/**}"
     }
   }
 }

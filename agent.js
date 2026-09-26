@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { launchAgentBrowser } from './browser.js';
 
 const auditSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'vendor', 'audit.js'),
@@ -53,18 +53,9 @@ export async function runOdyssey({ url, emit }) {
   };
 
   try {
-    let headed = !process.env.VERCEL;
-    try {
-      browser = await chromium.launch(headed
-        ? { headless: false, slowMo: 220, args: ['--window-position=80,60'] }
-        : { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
-    } catch {
-      headed = false;
-      browser = await chromium.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      });
-    }
+    const launched = await launchAgentBrowser();
+    browser = launched.browser;
+    const headed = launched.headed;
 
     const browserNote = headed
       ? 'Agent browser is open on your desktop. This page mirrors every step.'

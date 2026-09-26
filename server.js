@@ -23,7 +23,7 @@ app.get('/api/history', (_req, res) => {
   res.json(readHistory());
 });
 
-app.post('/api/run', (req, res) => {
+app.post('/api/run', async (req, res) => {
   const raw = String(req.body?.url || '').trim();
   let target;
   try {
@@ -55,17 +55,30 @@ app.post('/api/run', (req, res) => {
   };
   runs.set(id, run);
   active = true;
-  res.json({ id });
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  run.listeners.add(res);
+  writeEvent(res, { type: 'started', id });
+  res.on('close', () => run.listeners.delete(res));
 
-  runOdyssey({
-    url: target.href,
-    emit: (event) => publish(run, event),
-  }).catch((err) => {
-    publish(run, { type: 'failed', message: err instanceof Error ? err.message : String(err) });
-  }).finally(() => {
+  try {
+    await runOdyssey({
+      url: target.href,
+      emit: (event) => publish(run, event),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('odyssey run failed:', message);
+    publish(run, { type: 'failed', message });
+  } finally {
     active = false;
     if (run.status === 'running') run.status = run.error ? 'error' : 'done';
-  });
+    run.listeners.delete(res);
+    res.end();
+  }
 });
 
 app.get('/api/runs/:id/events', (req, res) => {
@@ -177,10 +190,14 @@ function publish(run, event) {
     run.status = 'error';
     run.error = event.message;
   }
-  const safe = { ...event };
-  delete safe.frame;
-  run.events.push(safe);
-  for (const listener of run.listeners) writeEvent(listener, safe);
+  const stored = { ...event };
+  delete stored.frame;
+  run.events.push(stored);
+  const wire = { ...stored };
+  if (event.frame) {
+    wire.preview = `data:image/jpeg;base64,${Buffer.from(event.frame).toString('base64')}`;
+  }
+  for (const listener of run.listeners) writeEvent(listener, wire);
 }
 
 function saveShot(run, frame) {

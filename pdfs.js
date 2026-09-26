@@ -5,15 +5,10 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { chromium } from 'playwright';
+import { launchPdfBrowser } from './browser.js';
 
 export async function buildPdfs(runDir, report) {
-  const browser = await chromium.launch({
-    headless: true,
-    args: process.env.VERCEL
-      ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-      : [],
-  });
+  const browser = await launchPdfBrowser();
   try {
     const page = await browser.newPage();
     await print(page, designHtml(report, runDir), join(runDir, 'design.pdf'));

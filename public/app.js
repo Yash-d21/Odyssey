@@ -45,49 +45,67 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
+  const type = res.headers.get('content-type') || '';
+  if (!res.ok || !type.includes('text/event-stream')) {
+    const body = await res.json().catch(() => ({}));
     fail(body.error || 'Could not start the run.');
     return;
   }
 
-  listen(body.id);
-  pollFrame(body.id);
+  await readRun(res);
 });
 
-function listen(id) {
-  const source = new EventSource(`/api/runs/${id}/events`);
-  source.addEventListener('status', (event) => {
-    const data = JSON.parse(event.data);
-    setStatus(data.message);
-  });
-  source.addEventListener('action', (event) => {
-    const data = JSON.parse(event.data);
+function applyRunEvent(id, type, data) {
+  if (type === 'started') {
+    activeId = data.id;
+    pollFrame(data.id);
+    return;
+  }
+  if (type === 'status') setStatus(data.message);
+  if (type === 'action') {
     addAction(data);
     if (data.url) liveUrl.textContent = data.url;
-  });
-  source.addEventListener('finding', (event) => {
-    const data = JSON.parse(event.data);
-    setStatus(`Found: ${data.finding.title}`);
-  });
-  source.addEventListener('done', (event) => {
-    const data = JSON.parse(event.data);
-    source.close();
+    if (data.preview) showFrame(data.preview);
+  }
+  if (type === 'finding') setStatus(`Found: ${data.finding.title}`);
+  if (type === 'done') {
     stopFrame();
     setBusy(false);
     setPill('Done', '');
     setStatus('Run finished.');
-    activeId = id;
-    renderReport(id, data.report);
+    activeId = id || data.id;
+    renderReport(activeId, data.report);
     loadHistory();
-  });
-  source.addEventListener('failed', (event) => {
-    if (!event.data) return;
-    const data = JSON.parse(event.data);
-    source.close();
-    stopFrame();
-    fail(data.message || 'The agent stopped.');
-  });
+  }
+  if (type === 'failed') fail(data.message || 'The agent stopped.');
+}
+
+async function readRun(res) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let id = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const chunks = buf.split('\n\n');
+    buf = chunks.pop();
+    for (const chunk of chunks) {
+      const type = (chunk.match(/^event: (.+)$/m) || [])[1];
+      const dataLine = chunk.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(6)).join('\n');
+      if (!type || !dataLine) continue;
+      const data = JSON.parse(dataLine);
+      if (type === 'started') id = data.id;
+      applyRunEvent(id, type, data);
+    }
+  }
+}
+
+function showFrame(src) {
+  frame.src = src;
+  frame.hidden = false;
+  frameEmpty.hidden = true;
 }
 
 function pollFrame(id) {

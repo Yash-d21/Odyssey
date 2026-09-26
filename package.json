@@ -5,10 +5,10 @@
   "type": "module",
   "description": "Odyssey — live browser agent plus UI/UX audit for any website link.",
   "scripts": {
-    "start": "node server.js",
-    "vercel-build": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium-headless-shell"
+    "start": "node server.js"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^153.0.0",
     "express": "^4.21.2",
     "playwright": "^1.55.0"
   }
