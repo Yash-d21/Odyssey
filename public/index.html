@@ -35,20 +35,53 @@
           <p id="frame-empty">The agent’s browser will show up here, including each click.</p>
         </div>
       </div>
-      <aside class="log-panel">
-        <h2>What the agent is doing</h2>
-        <ol id="actions"></ol>
+      <aside class="side-stack">
+        <div class="log-panel">
+          <h2>What the agent is doing</h2>
+          <ol id="actions"></ol>
+        </div>
+        <div class="graph-panel">
+          <h2>Site map</h2>
+          <p id="graph-empty" class="panel-empty">Pages open here as the agent walks the site.</p>
+          <div id="live-graph" class="graph-host" hidden></div>
+        </div>
       </aside>
     </section>
 
-    <section id="report" class="sheet" hidden>
-      <div class="sheet-tools">
-        <a id="design-pdf" href="#" download="odyssey-design.pdf">Design PDF</a>
-        <a id="testing-pdf" href="#" download="odyssey-testing.pdf">Testing PDF</a>
-        <button id="print" type="button">Print document</button>
-        <a id="download" href="#" download="odyssey-report.json">Download JSON</a>
+    <section id="report-layout" class="report-layout" hidden>
+      <div id="report" class="sheet">
+        <div class="sheet-tools">
+          <a id="design-pdf" href="#" download="odyssey-design.pdf">Design PDF</a>
+          <a id="testing-pdf" href="#" download="odyssey-testing.pdf">Testing PDF</a>
+          <button id="print" type="button">Print document</button>
+          <a id="download" href="#" download="odyssey-report.json">Download JSON</a>
+        </div>
+        <article id="document" class="document"></article>
       </div>
-      <article id="document" class="document"></article>
+      <aside id="dashboard" class="dashboard" aria-label="Run dashboard">
+        <h2>Run dashboard</h2>
+        <p id="dash-summary" class="dash-summary"></p>
+        <div class="dash-score">
+          <div class="score-ring" id="score-ring" aria-hidden="true"></div>
+          <div>
+            <p class="score-label">Health</p>
+            <p class="score-value" id="dash-health">—</p>
+          </div>
+        </div>
+        <div class="dash-stats" id="dash-stats"></div>
+        <div class="dash-chart">
+          <h3>Severity</h3>
+          <div id="severity-chart" class="chart-host"></div>
+        </div>
+        <div class="dash-chart">
+          <h3>Pages vs clicks</h3>
+          <div id="activity-chart" class="chart-host"></div>
+        </div>
+        <div class="dash-chart">
+          <h3>Issues by viewport</h3>
+          <div id="viewport-chart" class="chart-host"></div>
+        </div>
+      </aside>
     </section>
       </div>
 

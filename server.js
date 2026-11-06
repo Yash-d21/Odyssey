@@ -13,14 +13,41 @@ app.use(express.static(join(root, 'public')));
 
 const dataDir = process.env.VERCEL ? join('/tmp', 'odyssey') : join(root, 'data');
 const historyFile = join(dataDir, 'history.json');
+const demoFile = join(root, 'public', 'demo-data.json');
 mkdirSync(dataDir, { recursive: true });
 
 const runs = new Map();
 const pdfJobs = new Map();
 let active = false;
+let demoCache = null;
 
 app.get('/api/history', (_req, res) => {
-  res.json(readHistory());
+  const demos = readDemos().map((item) => ({
+    id: item.id,
+    url: item.url,
+    finishedAt: item.finishedAt,
+    counts: item.counts,
+    clicks: item.clicks,
+    demo: true,
+  }));
+  const real = readHistory().map((item) => ({ ...item, demo: false }));
+  res.json([...demos, ...real]);
+});
+
+app.get('/api/demo/:id', (req, res) => {
+  const item = readDemos().find((demo) => demo.id === req.params.id);
+  if (!item?.report) {
+    res.status(404).json({ error: 'Unknown demo run' });
+    return;
+  }
+  res.json({
+    id: item.id,
+    url: item.url,
+    status: 'done',
+    error: null,
+    demo: true,
+    report: item.report,
+  });
 });
 
 app.post('/api/run', async (req, res) => {
@@ -142,6 +169,18 @@ app.get('/api/runs/:id/shots/:name', (req, res) => {
 });
 
 app.get('/api/runs/:id', (req, res) => {
+  const demo = readDemos().find((item) => item.id === req.params.id);
+  if (demo?.report) {
+    res.json({
+      id: demo.id,
+      url: demo.url,
+      status: 'done',
+      error: null,
+      demo: true,
+      report: demo.report,
+    });
+    return;
+  }
   if (!isRunId(req.params.id)) {
     res.status(400).json({ error: 'Unknown run' });
     return;
@@ -264,6 +303,21 @@ function readHistory() {
   } catch {
     return [];
   }
+}
+
+function readDemos() {
+  if (demoCache) return demoCache;
+  if (!existsSync(demoFile)) {
+    demoCache = [];
+    return demoCache;
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(demoFile, 'utf8'));
+    demoCache = Array.isArray(parsed?.runs) ? parsed.runs : [];
+  } catch {
+    demoCache = [];
+  }
+  return demoCache;
 }
 
 function isRunId(id) {

@@ -1,8 +1,8 @@
 /**
  * Odyssey agent.
  *
- * Opens a real Chromium window, clicks through a few same-site links, and
- * measures the page with the ui-ux-audit script (MIT, imYChaudhary22/ui-ux-audit).
+ * Opens a real Chromium window, crawls same-site pages into a graph, and
+ * measures the landing page with the ui-ux-audit script (MIT, imYChaudhary22/ui-ux-audit).
  * Design numbers come from that script. Functional notes come from what the
  * agent actually saw: console errors, failed requests, and clicks.
  */
@@ -24,14 +24,22 @@ const VIEWPORTS = [
 ];
 
 const SKIP_TEXT = /log\s*out|sign\s*out|delete|remove|checkout|payment|subscribe|unsubscribe|download/i;
+const SKIP_PATH = /\.(pdf|zip|rar|7z|gz|tgz|doc|docx|xls|xlsx|ppt|pptx|csv|mp3|mp4|avi|mov|wmv|webm|jpg|jpeg|png|gif|svg|webp|ico|css|js|json|xml|rss|atom)(\?|$)/i;
+const MAX_PAGES = Number(process.env.ODYSSEY_MAX_PAGES)
+  || (process.env.VERCEL ? 15 : 80);
 
 export async function runOdyssey({ url, emit }) {
   const startedAt = new Date().toISOString();
   const findings = [];
   const actions = [];
   const pagesVisited = [];
+  const pageGraph = { nodes: [], edges: [] };
   let browser;
   let clicks = 0;
+
+  const emitGraph = () => {
+    emit({ type: 'graph', pageGraph: snapshotGraph(pageGraph) });
+  };
 
   const pushAction = async (page, message, extra = {}) => {
     const entry = {
@@ -83,14 +91,17 @@ export async function runOdyssey({ url, emit }) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await page.waitForTimeout(700);
     const title = await page.title();
-    pagesVisited.push({ url: page.url(), title });
-    await pushAction(page, `Landed on “${title || page.url()}”`, { viewport: 'desktop' });
+    const landedUrl = page.url();
+    pagesVisited.push({ url: landedUrl, title });
+    addGraphNode(pageGraph, landedUrl, title, true);
+    emitGraph();
+    await pushAction(page, `Landed on “${title || landedUrl}”`, { viewport: 'desktop' });
 
     await scrollThrough(page);
     await pushAction(page, 'Scrolled the page so below-the-fold content loads', { viewport: 'desktop' });
 
     await measure(page, 'desktop', findings, emit, pushAction);
-    clicks = await clickThrough(page, pushAction, pagesVisited, findings, emit);
+    clicks = await clickThrough(page, pushAction, pagesVisited, pageGraph, emitGraph, findings, emit);
 
     for (const vp of VIEWPORTS.slice(1)) {
       await page.setViewportSize({ width: vp.width, height: vp.height });
@@ -101,7 +112,15 @@ export async function runOdyssey({ url, emit }) {
 
     addFunctionalFindings(page.url(), consoleErrors, networkFailures, findings, emit);
 
-    const report = buildReport({ url, startedAt, findings, actions, pagesVisited, clicks });
+    const report = buildReport({
+      url,
+      startedAt,
+      findings,
+      actions,
+      pagesVisited,
+      pageGraph: snapshotGraph(pageGraph),
+      clicks,
+    });
     emit({ type: 'done', report });
     return report;
   } catch (err) {
@@ -318,7 +337,7 @@ function mapAudit(data, viewport, pageUrl) {
   return out;
 }
 
-async function clickThrough(page, pushAction, pagesVisited, findings, emit) {
+async function clickThrough(page, pushAction, pagesVisited, pageGraph, emitGraph, findings, emit) {
   const home = page.url();
   let origin;
   try {
@@ -327,86 +346,150 @@ async function clickThrough(page, pushAction, pagesVisited, findings, emit) {
     return 0;
   }
 
-  const picks = await page.evaluate(({ origin, skip }) => {
-    const pattern = new RegExp(skip, 'i');
+  const startId = normalizeUrl(home);
+  const visited = new Set([startId]);
+  const queued = new Set();
+  const queue = [];
+
+  const enqueueLinks = async (fromUrl) => {
+    const links = await collectSameSiteLinks(page, origin);
+    for (const link of links) {
+      const id = normalizeUrl(link.href);
+      if (visited.has(id) || queued.has(id)) continue;
+      if (!isCrawlableUrl(link.href, origin)) continue;
+      queued.add(id);
+      queue.push({ from: normalizeUrl(fromUrl), ...link, id });
+    }
+  };
+
+  await enqueueLinks(home);
+  await pushAction(
+    page,
+    queue.length
+      ? `Found ${queue.length} same-site page${queue.length === 1 ? '' : 's'} to open (cap ${MAX_PAGES}).`
+      : 'No safe same-site links to open. Design checks still ran.',
+    { viewport: 'desktop' },
+  );
+
+  let clicks = 0;
+  while (queue.length && visited.size < MAX_PAGES) {
+    const pick = queue.shift();
+    queued.delete(pick.id);
+    if (visited.has(pick.id)) continue;
+
+    try {
+      await pushAction(page, `Opening “${pick.text}”`, {
+        url: pick.from,
+        viewport: 'desktop',
+      });
+      const response = await page.goto(pick.href, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+      await page.waitForTimeout(700);
+
+      const contentType = response?.headers()?.['content-type'] || '';
+      if (contentType && !/text\/html|application\/xhtml/i.test(contentType)) {
+        await pushAction(page, `Skipped non-HTML resource: ${pick.text}`, {
+          url: pick.href,
+          viewport: 'desktop',
+        });
+        visited.add(pick.id);
+        continue;
+      }
+
+      clicks += 1;
+      const landed = page.url();
+      const landedId = normalizeUrl(landed);
+      const landedTitle = await page.title();
+      visited.add(pick.id);
+      visited.add(landedId);
+      pagesVisited.push({ url: landed, title: landedTitle });
+      addGraphNode(pageGraph, landed, landedTitle, false);
+      addGraphEdge(pageGraph, pick.from, landed, pick.text);
+      emitGraph();
+      await pushAction(
+        page,
+        landedId === pick.from
+          ? `Clicked “${pick.text}” and stayed on this page`
+          : `Opened “${landedTitle || landed}” (${visited.size}/${MAX_PAGES} pages)`,
+        { url: landed, viewport: 'desktop' },
+      );
+
+      if (visited.size < MAX_PAGES) {
+        await enqueueLinks(landed);
+      }
+    } catch (err) {
+      visited.add(pick.id);
+      const message = err instanceof Error ? err.message : String(err);
+      await pushAction(page, `Open failed: “${pick.text}”`, { url: pick.href, viewport: 'desktop' });
+      addFinding(findings, emit, {
+        severity: 'high',
+        kind: 'functional',
+        title: `Page open failed: ${pick.text}`,
+        where: pick.href,
+        detail: message.slice(0, 280),
+        fix: 'Open this link by hand and confirm the page loads.',
+        viewport: 'desktop',
+      });
+    }
+  }
+
+  if (queue.length && visited.size >= MAX_PAGES) {
+    await pushAction(
+      page,
+      `Reached the ${MAX_PAGES}-page crawl cap with ${queue.length} link${queue.length === 1 ? '' : 's'} still queued.`,
+      { viewport: 'desktop' },
+    );
+  }
+
+  await page.goto(home, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  return clicks;
+}
+
+function isCrawlableUrl(href, origin) {
+  let parsed;
+  try {
+    parsed = new URL(href);
+  } catch {
+    return false;
+  }
+  if (parsed.origin !== origin) return false;
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  if (parsed.username || parsed.password) return false;
+  if (SKIP_PATH.test(parsed.pathname)) return false;
+  return true;
+}
+
+async function collectSameSiteLinks(page, origin) {
+  return page.evaluate(({ origin, skipText, skipPath }) => {
+    const textPattern = new RegExp(skipText, 'i');
+    const pathPattern = new RegExp(skipPath, 'i');
     const seen = new Set();
     const items = [];
     for (const el of document.querySelectorAll('a[href]')) {
-      const text = (el.innerText || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
-      if (!text || pattern.test(text)) continue;
-      const rect = el.getBoundingClientRect();
-      const style = getComputedStyle(el);
-      if (rect.width < 8 || rect.height < 8 || style.visibility === 'hidden' || style.display === 'none') continue;
+      const text = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, 80);
+      if (text && textPattern.test(text)) continue;
       let href = '';
       try { href = el.href; } catch { continue; }
       if (!href || href.startsWith('mailto:') || href.startsWith('javascript:') || href.startsWith('tel:')) continue;
       let next;
       try { next = new URL(href); } catch { continue; }
       if (next.origin !== origin) continue;
-      if (next.href.split('#')[0] === location.href.split('#')[0]) continue;
-      if (seen.has(next.href)) continue;
-      seen.add(next.href);
-      items.push({ text, href: next.href });
-      if (items.length >= 3) break;
+      if (pathPattern.test(next.pathname)) continue;
+      next.hash = '';
+      const bare = next.href;
+      if (bare.split('#')[0] === location.href.split('#')[0]) continue;
+      if (seen.has(bare)) continue;
+      seen.add(bare);
+      const label = text || next.pathname || bare;
+      items.push({ text: label, href: bare });
     }
     return items;
-  }, { origin, skip: SKIP_TEXT.source });
-
-  if (picks.length === 0) {
-    await pushAction(page, 'No safe same-site links to click. Design checks still ran.', { viewport: 'desktop' });
-    return 0;
-  }
-
-  let clicks = 0;
-  for (const pick of picks) {
-    try {
-      await page.goto(home, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(400);
-      const marked = await page.evaluate((href) => {
-        const el = [...document.querySelectorAll('a[href]')].find((node) => node.href === href);
-        if (!el) return false;
-        el.setAttribute('data-odyssey-target', '1');
-        el.style.outline = '3px solid #e05a00';
-        el.style.outlineOffset = '3px';
-        el.scrollIntoView({ block: 'center', inline: 'nearest' });
-        return true;
-      }, pick.href);
-      if (!marked) {
-        await pushAction(page, `Could not find “${pick.text}” again`, { viewport: 'desktop' });
-        continue;
-      }
-      await page.waitForTimeout(250);
-      await pushAction(page, `Clicking “${pick.text}”`, { viewport: 'desktop' });
-      await page.locator('[data-odyssey-target="1"]').first().click({ timeout: 8000 });
-      await page.waitForTimeout(900);
-      clicks += 1;
-      const landed = page.url();
-      const landedTitle = await page.title();
-      pagesVisited.push({ url: landed, title: landedTitle });
-      await pushAction(
-        page,
-        landed.split('#')[0] === home.split('#')[0]
-          ? `Clicked “${pick.text}” and stayed on this page`
-          : `Opened “${landedTitle || landed}”`,
-        { url: landed, viewport: 'desktop' },
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await pushAction(page, `Click on “${pick.text}” failed`, { viewport: 'desktop' });
-      addFinding(findings, emit, {
-        severity: 'high',
-        kind: 'functional',
-        title: `Click failed: ${pick.text}`,
-        where: pick.href,
-        detail: message.slice(0, 280),
-        fix: 'Open this link by hand and confirm the control is visible and not covered.',
-        viewport: 'desktop',
-      });
-    }
-  }
-
-  await page.goto(home, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-  return clicks;
+  }, { origin, skipText: SKIP_TEXT.source, skipPath: SKIP_PATH.source });
 }
 
 function addFunctionalFindings(pageUrl, consoleErrors, networkFailures, findings, emit) {
@@ -448,14 +531,62 @@ function addFinding(findings, emit, finding) {
   emit({ type: 'finding', finding: stored });
 }
 
-function buildReport({ url, startedAt, findings, actions, pagesVisited, clicks }) {
+function normalizeUrl(raw) {
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = '';
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+    return parsed.href;
+  } catch {
+    return String(raw || '').split('#')[0];
+  }
+}
+
+function addGraphNode(pageGraph, url, title, isStart) {
+  const id = normalizeUrl(url);
+  const existing = pageGraph.nodes.find((node) => node.id === id);
+  if (existing) {
+    if (title && !existing.title) existing.title = title;
+    if (isStart) existing.isStart = true;
+    return existing;
+  }
+  const node = { id, url: id, title: title || '', isStart: Boolean(isStart) };
+  pageGraph.nodes.push(node);
+  return node;
+}
+
+function addGraphEdge(pageGraph, fromUrl, toUrl, label) {
+  const from = normalizeUrl(fromUrl);
+  const to = normalizeUrl(toUrl);
+  if (from === to) return;
+  const key = `${from}->${to}->${label || ''}`;
+  if (pageGraph.edges.some((edge) => `${edge.from}->${edge.to}->${edge.label || ''}` === key)) return;
+  pageGraph.edges.push({ from, to, label: label || '' });
+}
+
+function snapshotGraph(pageGraph) {
+  return {
+    nodes: pageGraph.nodes.map((node) => ({ ...node })),
+    edges: pageGraph.edges.map((edge) => ({ ...edge })),
+  };
+}
+
+function buildReport({ url, startedAt, findings, actions, pagesVisited, pageGraph, clicks }) {
   const counts = { critical: 0, high: 0, medium: 0 };
   for (const finding of findings) {
     if (counts[finding.severity] !== undefined) counts[finding.severity] += 1;
   }
+  const uniquePages = new Set(pagesVisited.map((page) => normalizeUrl(page.url))).size;
   const verdict = findings.length === 0
-    ? `Visited ${url}. The agent opened ${pagesVisited.length} page${pagesVisited.length === 1 ? '' : 's'} and clicked ${clicks} link${clicks === 1 ? '' : 's'}. No measured issues.`
+    ? `Visited ${url}. The agent opened ${uniquePages} page${uniquePages === 1 ? '' : 's'} and clicked ${clicks} link${clicks === 1 ? '' : 's'}. No measured issues.`
     : `Visited ${url} on desktop, tablet, and mobile. ${counts.critical} critical, ${counts.high} high, ${counts.medium} medium. The agent clicked ${clicks} link${clicks === 1 ? '' : 's'}.`;
+
+  const health = Math.max(
+    0,
+    Math.min(100, 100 - (counts.critical * 25 + counts.high * 12 + counts.medium * 5)),
+  );
 
   return {
     url,
@@ -465,9 +596,25 @@ function buildReport({ url, startedAt, findings, actions, pagesVisited, clicks }
     counts,
     clicks,
     pagesVisited,
+    pageGraph: pageGraph || { nodes: [], edges: [] },
+    dashboard: {
+      health,
+      pages: uniquePages,
+      clicks,
+      summary: verdict,
+      viewportTrend: [
+        { name: 'desktop', issues: countViewportIssues(findings, 'desktop') },
+        { name: 'tablet', issues: countViewportIssues(findings, 'tablet') },
+        { name: 'mobile', issues: countViewportIssues(findings, 'mobile') },
+      ],
+    },
     actions: actions.map(({ at, message, url: actionUrl, viewport }) => ({
       at, message, url: actionUrl, viewport,
     })),
     findings: findings.map(({ key, ...finding }) => finding),
   };
+}
+
+function countViewportIssues(findings, viewport) {
+  return findings.filter((finding) => String(finding.viewport || '').includes(viewport)).length;
 }
